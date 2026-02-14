@@ -1,21 +1,9 @@
 #include "config_parser.h"
+#include "utils.h"
 
 #include <fstream>
 #include <stdexcept>
 #include <cstdlib>
-
-// Removes
-// spaces, tabs, newlines
-// from the start and end of string
-std::string ConfigParser::trim(const std::string& str) {
-    size_t start_pos = str.find_first_not_of(" \t\r\n");
-    if (start_pos == std::string::npos) {
-        return "";
-    }
-
-    size_t end_pos = str.find_last_not_of(" \t\r\n");
-    return str.substr(start_pos, end_pos - start_pos + 1);
-}
 
 void ConfigParser::load(const std::string& path) {
     std::ifstream file(path.c_str());
@@ -29,7 +17,7 @@ void ConfigParser::load(const std::string& path) {
     std::string line;
 
     while (std::getline(file, line)) {
-        line = trim(line);
+        line = utils::trim(line);
         if (line.empty()) {
             continue;
         }
@@ -39,7 +27,7 @@ void ConfigParser::load(const std::string& path) {
         }
 
         if (line.front() == '[' && line.back() == ']') {
-            section_name = trim(line.substr(1, line.size() -2));
+            section_name = utils::trim(line.substr(1, line.size() -2));
             if (section_name.empty()) {
                 section_name = "DEFAULT";
             }
@@ -51,8 +39,8 @@ void ConfigParser::load(const std::string& path) {
             continue;
         }
 
-        std::string key = trim(line.substr(0, equal_pos));
-        std::string value = trim(line.substr(equal_pos +1));
+        std::string key = utils::trim(line.substr(0, equal_pos));
+        std::string value = utils::trim(line.substr(equal_pos +1));
         if (key.empty()) {
             continue;
         }

@@ -23,7 +23,6 @@ public:
 private:
     SessionConfig defaults;
     std::map<std::string, SessionConfig> sessions;
-    static std::string trim(const std::string& str);
 };
 
 #endif
