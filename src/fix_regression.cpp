@@ -61,13 +61,19 @@ static void parse_fields(const std::string& payload,
     fields.reserve(64);
     if (msg_type_out) msg_type_out->clear();
 
+    char delim = 0;
+    if (payload.find('|') != std::string::npos) delim = '|';
+    else if (payload.find(',') != std::string::npos) delim = ',';
+    else delim = 0;
+
     size_t pos = 0;
-    while (pos < payload.size()) {
-        size_t end = payload.find('|', pos);
+    while (pos <= payload.size()) {
+        size_t end = std::string::npos;
+        if (delim) end = payload.find(delim, pos);
         if (end == std::string::npos) end = payload.size();
 
         std::string token = utils::trim(payload.substr(pos, end - pos));
-        pos = (end < payload.size()) ? (end + 1) : end;
+        pos = (end < payload.size()) ? (end + 1) : (payload.size() + 1);
 
         if (token.empty()) continue;
 
@@ -196,64 +202,65 @@ static bool run_file(const std::string& file_path,
         }
 
         if (cmd == "SND") {
-            FixMessage::FieldList raw;
-            std::string msg_type;
-            parse_fields(payload, raw, &msg_type);
-
-            FixMessage::FieldList body;
-            body.reserve(raw.size());
-
-            const std::string sending_time = utils::get_utc_timestamp();
-
-            for (size_t i = 0; i < raw.size(); ++i) {
-                const int tag = raw[i].first;
-                std::string value = raw[i].second;
-
-                if (tag == 35) continue;
-
-                // ignore header/trailer in file
-                if (tag == 8 || tag == 9 || tag == 10 || tag == 34 || tag == 49 || tag == 52 || tag == 56) {
-                    continue;
-                }
-
-                if (value.size() >= 4 && value[0] == 'c' && value[1] == 'l' && value[2] == 'r') {
-                    int n = 0;
-                    bool ok = true;
-                    for (size_t j = 3; j < value.size(); ++j) {
-                        const char ch = value[j];
-                        if (ch < '0' || ch > '9') { ok = false; break; }
-                        n = (n * 10) + (ch - '0');
-                    }
-                    if (ok && n >= 1 && n <= max_clr) {
-                        value = clr_values[n];
-                    }
-                }
-
-                if (tag == 60 && value.empty()) {
-                    value = sending_time;
-                }
-
-                body.push_back(std::make_pair(tag, value));
-            }
-
-            const std::string msg = fix.build_message(msg_type, outbound_seq, sending_time, body);
-            if (msg.empty()) {
-                std::printf("Error: failed to build SND message\n");
-                return false;
-            }
-
-            if (!socket.send_bytes(msg)) {
-                return false;
-            }
-
-            last_send_ms = utils::get_monotonic_millis();
-            outbound_seq++;
-            save_token(token_path, outbound_seq);
-            scenarios_sent = true;
-
-            step++;
-            std::printf("  %d  SEND: %s\n", step, payload.c_str());
-            continue;
+			FixMessage::FieldList raw;
+			std::string msg_type;
+			parse_fields(payload, raw, &msg_type);
+			
+			if (msg_type.empty()) {
+			    std::printf("Error: SND missing 35\n");
+			    scenario_ok = false;
+			    continue;
+			}
+			
+			const std::string now_utc = utils::get_utc_timestamp();
+			
+			// apply clrN + fill blanks
+			for (size_t i = 0; i < raw.size(); ++i) {
+			    const int tag = raw[i].first;
+			    std::string& value = raw[i].second;
+			
+			    // clrN
+			    if (value.size() >= 4 && value[0]=='c' && value[1]=='l' && value[2]=='r') {
+			        int n = 0; bool ok = true;
+			        for (size_t j = 3; j < value.size(); ++j) {
+			            const char ch = value[j];
+			            if (ch < '0' || ch > '9') { ok = false; break; }
+			            n = (n * 10) + (ch - '0');
+			        }
+			        if (ok && n >= 1 && n <= max_clr) value = clr_values[n];
+			    }
+			
+			    // fill blanks
+			    if (tag == 34 && value.empty()) {
+			        char buf[32];
+			        std::snprintf(buf, sizeof(buf), "%d", outbound_seq);
+			        value = buf;
+			    }
+			    if (tag == 52 && value.empty()) value = now_utc;
+			    if (tag == 60 && value.empty()) value = now_utc;
+			
+			    if (tag == 49 && value.empty()) value = fix.get_sender_comp_id();  // if you have getter
+			    if (tag == 56 && value.empty()) value = fix.get_target_comp_id();  // if you have getter
+			}
+			
+			// build raw FIX using scenario fields
+			const std::string msg = fix.build_from_fields(raw);
+			if (msg.empty()) {
+			    std::printf("Error: failed to build raw FIX from fields\n");
+			    scenario_ok = false;
+			    continue;
+			}
+			
+			if (!socket.send_bytes(msg)) return false;
+			
+			last_send_ms = utils::get_monotonic_millis();
+			outbound_seq++;
+			save_token(token_path, outbound_seq);
+			scenarios_sent = true;
+			
+			step++;
+			std::printf("  %d  SEND: %s\n", step, payload.c_str());
+			continue;
         }
 
         if (cmd == "TST") {
